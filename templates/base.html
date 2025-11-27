@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>{% block title %}FCR & Formulation App{% endblock %}</title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <style>
+        body { padding-top: 70px; background-color: #f8f9fa; }
+        .navbar { background-color: #28a745 !important; }
+        .navbar-brand, .nav-link { color: #ffffff !important; }
+        .card { margin-top: 20px; }
+        .result-box { border-left: 5px solid #007bff; padding-left: 15px; background-color: #e9f5ff; }
+        .error-message { color: #dc3545; font-weight: bold; }
+    </style>
+</head>
+<body>
+    
+    <nav class="navbar navbar-expand-lg navbar-dark fixed-top">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="{{ url_for('home') }}">🐄 FCR & Feed Optimizer</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('home') }}">FCR Prediction</a>
+                    </li>{% if current_user.is_authenticated -%}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('formulation_page') }}">Standard Formulation</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('calculator_page') }}">Custom Mixer</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('data_analysis') }}">Data Analysis</a>
+                    </li>
+                    {%- endif %}
+                </ul>
+                
+                <ul class="navbar-nav">
+                    {%- if current_user.is_authenticated %}
+                    <li class="nav-item">
+                        <span class="nav-link">Welcome, {{ current_user.username }}!</span>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link btn btn-sm btn-outline-light ms-2" href="{{ url_for('logout') }}">Logout</a>
+                    </li>
+                    {% else %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('signup') }}">Sign Up</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link btn btn-sm btn-light ms-2 text-success" href="{{ url_for('login') }}">Log In</a>
+                    </li>
+                    {%- endif %}
+                </ul>
+                
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

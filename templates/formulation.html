@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block title %}Standard Feed Formulation{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 offset-md-2">
+        <h2 class="mt-4 text-center">Least-Cost Standard Feed Formulation</h2>
+        <p class="text-center text-muted">Find the minimum cost mix for a standard life stage (100 kg batch).</p>
+
+        {% if error %}
+        <div class="alert alert-danger" role="alert">
+            <span class="error-message">Error:</span> {{ error }}
+        </div>
+        {% endif %}
+
+        <div class="card shadow">
+            <div class="card-body">
+                <form action="{{ url_for('formulate') }}" method="post">
+                    <div class="mb-3">
+                        <label for="animal_type" class="form-label">Enter Animal Life Stage (e.g., "Grower Pig" or "Dairy Cow")</label>
+                        <input type="text" class="form-control" id="animal_type" name="animal_type" placeholder="e.g., Grower Pig (25-50 kg)" required list="available_targets_list">
+                        <datalist id="available_targets_list">
+                            {% for target in available_targets %}
+                            <option value="{{ target }}">
+                            {% endfor %}
+                        </datalist>
+                        <small class="form-text text-muted">We use fuzzy matching to find the best profile.</small>
+                    </div>
+                    <button type="submit" class="btn btn-success w-100">Formulate 100 kg Batch</button>
+                </form>
+            </div>
+        </div>
+
+        {% if result %}
+        <div class="card shadow mt-4">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0">💰 Formulation Result: {{ result.type }}</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Status:</strong> {{ result.lp_results.Status }}</p>
+                <p><strong>Total Cost:</strong> <span class="text-danger">{{ result.lp_results.Cost }}</span></p>
+                <p><strong>Batch Size Check:</strong> {{ result.lp_results.Total_Weight_Check }}</p>
+
+                <h6 class="mt-3">Required Ingredients (Proportions for 100 kg):</h6>
+                <table class="table table-bordered table-sm">
+                    <thead>
+                        <tr><th>Ingredient</th><th>Quantity</th><th>Proportion</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for ingredient, quantity, proportion in result.lp_results.Ingredients %}
+                        <tr><td>{{ ingredient }}</td><td>{{ quantity }}</td><td>{{ proportion }}</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                
+                <h6 class="mt-3">Nutrient Target vs. Achieved:</h6>
+                <table class="table table-sm">
+                    <thead>
+                        <tr><th>Nutrient</th><th>Target Range</th><th>Achieved Level</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Protein</td>
+                            <td>{{ "{:.1%}".format(result.targets.Min_Protein) }} - {{ "{:.1%}".format(result.targets.Max_Protein) }}</td>
+                            <td><strong>{{ result.lp_results.Achieved_Nutrients.Protein }}</strong></td>
+                        </tr>
+                        <tr>
+                            <td>TDN</td>
+                            <td>{{ "{:.1%}".format(result.targets.Min_TDN) }} - {{ "{:.1%}".format(result.targets.Max_TDN) }}</td>
+                            <td><strong>{{ result.lp_results.Achieved_Nutrients.TDN }}</strong></td>
+                        </tr>
+                        <tr>
+                            <td>ADF</td>
+                            <td>Max {{ "{:.1%}".format(result.targets.Max_ADF) }}</td>
+                            <td><strong>{{ result.lp_results.Achieved_Nutrients.ADF }}</strong></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
