@@ -344,9 +344,10 @@ def create_app(*args, **kwargs):
         user_data = cursor.fetchone()
         conn.close()
         
-        if user_data:
-            return User(id=user_data[0], email=user_data[1], username=user_data[2], password_hash=user_data[3])
-        return None
+        if user_data is None:
+            return None
+            
+        return User(id=user_data[0], email=user_data[1], username=user_data[2], password_hash=user_data[3])
         
     @login_manager.user_loader
     def load_user(user_id):
