@@ -9,11 +9,11 @@ from sklearn.model_selection import GridSearchCV
 from thefuzz import fuzz
 from thefuzz import process
 from pulp import LpProblem, LpMinimize, LpVariable, value
-import sqlite3
 
 # --- NEW IMPORTS for Authentication ---
 from flask_login import UserMixin, LoginManager, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask_sqlalchemy import SQLAlchemy
 # -------------------------------------
 
 DATABASE = 'fcr_data.db' 
@@ -94,79 +94,82 @@ INGREDIENT_DATA = {
     'DCP/Lysine Premix': {'Cost_USD_kg': 1.20, 'Protein': 0.00, 'TDN': 0.00, 'ADF': 0.00},
 }
 
-
 # ====================================================================
-# 2. HELPER FUNCTIONS (Database, Analysis, Solver, and Authentication)
+# 2. HELPER FUNCTIONS (Non-Database and Database Logic Wrappers)
 # ====================================================================
 
-def init_db(app):
-    """Initializes the database and creates the prediction and users tables."""
-    db_path = os.path.join(app.root_path, DATABASE)
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+# NOTE: The database object (db) and models (User, Prediction) are now defined
+# inside create_app to avoid circular imports.
+# The functions below will access them via the application context.
+
+from sqlalchemy import exc # Import SQLAlchemy exceptions for error handling
+
+def get_db_models(app):
+    """Retrieves the SQLAlchemy db object, User model, and Prediction model 
+       from the application context."""
+    return app.extensions['sqlalchemy'], app.extensions['sqlalchemy']['User'], app.extensions['sqlalchemy']['Prediction']
+
+
+# --- Database Operations using SQLAlchemy ---
+
+def add_user(app, email, username, password):
+    """Creates a new user and stores the hashed password in the DB using SQLAlchemy."""
+    db, User, _ = get_db_models(app)
+
+    hashed_password = generate_password_hash(password)
+    cleaned_email = email.strip().lower()
+    cleaned_username = username.strip() 
+
+    new_user = User(email=cleaned_email, username=cleaned_username, password_hash=hashed_password)
     
-    # 1. Predictions Table (Existing)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS predictions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            weight REAL NOT NULL,
-            temperature REAL NOT NULL,
-            predicted_fcr REAL NOT NULL,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+    try:
+        db.session.add(new_user)
+        db.session.commit()
+        return True
+    except exc.IntegrityError:
+        # User with that email already exists
+        db.session.rollback()
+        return False
+
+def get_user_by_email(app, email):
+    """Fetches a user's data from the database by email using SQLAlchemy."""
+    _, User, _ = get_db_models(app)
+    cleaned_email = email.strip().lower()
     
-    # 2. Users Table (NEW)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,       
-            username TEXT NOT NULL,
-            password_hash TEXT NOT NULL
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
+    # Use SQLAlchemy to query the user
+    user = User.query.filter_by(email=cleaned_email).first()
+    return user
 
 def save_prediction(app, weight, temperature, predicted_fcr):
-    """Saves a single FCR prediction result to the database."""
-    db_path = os.path.join(app.root_path, DATABASE)
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    cursor.execute(
-        "INSERT INTO predictions (weight, temperature, predicted_fcr) VALUES (?, ?, ?)",
-        (weight, temperature, predicted_fcr)
+    """Saves a single FCR prediction result to the database using SQLAlchemy."""
+    db, _, Prediction = get_db_models(app)
+
+    new_prediction = Prediction(
+        weight=weight, 
+        temperature=temperature, 
+        predicted_fcr=predicted_fcr
     )
     
-    conn.commit()
-    conn.close()
+    db.session.add(new_prediction)
+    db.session.commit()
 
 def clear_db_predictions(app):
-    """Deletes all records from the predictions table."""
-    db_path = os.path.join(app.root_path, DATABASE)
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    """Deletes all records from the predictions table using SQLAlchemy."""
+    db, _, Prediction = get_db_models(app)
     
-    cursor.execute("DELETE FROM predictions")
-    
-    conn.commit()
-    conn.close()
+    # Delete all records from the Prediction table
+    Prediction.query.delete()
+    db.session.commit()
 
 def get_analysis_data(app):
-    """Fetches all predictions and calculates summary statistics."""
-    db_path = os.path.join(app.root_path, DATABASE)
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    """Fetches all predictions and calculates summary statistics using SQLAlchemy."""
+    db, _, Prediction = get_db_models(app)
     
-    cursor.execute("SELECT weight, temperature, predicted_fcr, timestamp FROM predictions ORDER BY timestamp DESC")
-    all_predictions = cursor.fetchall()
+    # Fetch all predictions ordered by timestamp
+    all_predictions_objects = Prediction.query.order_by(Prediction.timestamp.desc()).all()
     
-    conn.close()
-    
-    data_list = [{'weight': w, 'temp': t, 'fcr': f, 'time': ts} 
-                 for w, t, f, ts in all_predictions]
+    data_list = [{'weight': p.weight, 'temp': p.temperature, 'fcr': p.predicted_fcr, 'time': p.timestamp} 
+                 for p in all_predictions_objects]
     
     if data_list:
         fcr_values = np.array([d['fcr'] for d in data_list])
@@ -182,7 +185,6 @@ def get_analysis_data(app):
         summary = None
         
     return summary, data_list
-
 
 def least_cost_formulate(animal_type, target_batch_kg=100, custom_targets=None):
     """
@@ -263,97 +265,65 @@ def least_cost_formulate(animal_type, target_batch_kg=100, custom_targets=None):
     else:
         return {'Status': 'No Feasible Solution Found', 'Pulp_Status': prob.status}
 
-# --- NEW: User Model and Authentication Functions ---
-
-class User(UserMixin):
-    """
-    Model that wraps the user data for Flask-Login compatibility.
-    """
-    def __init__(self, id, email, username, password_hash):
-        self.id = id
-        self.email = email
-        self.username = username
-        self.password_hash = password_hash
-        
-    def get_id(self):
-        return str(self.id)
-
-def add_user(app, email, username, password):
-    """Creates a new user and stores the hashed password in the DB."""
-    db_path = os.path.join(app.root_path, DATABASE)
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    hashed_password = generate_password_hash(password)
-    cleaned_email = email.strip().lower()
-    cleaned_username = username.strip() # Ensure username is clean before saving
-    
-    try:
-        cursor.execute(
-            "INSERT INTO users (email, username, password_hash) VALUES (?, ?, ?)",
-            (cleaned_email, cleaned_username, hashed_password)
-        )
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False # Username already exists
-    finally:
-        conn.close()
-
-def get_user_by_email(app, email):
-    """Fetches a user's data from the database by username."""
-    db_path = os.path.join(app.root_path, DATABASE)
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cleaned_email = email.strip()
-    
-    cursor.execute(
-        "SELECT id, email, username, password_hash FROM users WHERE email = ?",
-        (cleaned_email,)
-    )
-    user_data = cursor.fetchone()
-    conn.close()
-    
-    if user_data:
-        return User(id=user_data[0], email=user_data[1], username=user_data[2], password_hash=user_data[3])
-    return None
-
-# ====================================================================
 # 3. APPLICATION FACTORY AND MODEL SETUP
 # ====================================================================
 
 def create_app(*args, **kwargs):
     app = Flask(__name__)
-    # Add a harmless comment to trigger a new commit and rebuild
-    # trigger deployment 1
+    # --- NEW: SQLAlchemy Configuration ---
+    # 1. Get the DB URL from the environment variable (Render) or use local fallback
+    db_url = os.environ.get("DATABASE_URL")
+
+    if db_url and db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
     
-    # --- Flask-Login Configuration ---
-    app.config['SECRET_KEY'] = 'your_strong_secret_key_here' 
+    app.config['SQLALCHEMY_DATABASE_URI'] = db_url or f'sqlite:///{os.path.join(app.root_path, DATABASE)}' 
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    # 3. Initialize the database object
+    db = SQLAlchemy(app) 
+    app.config['SECRET_KEY'] = 'your_strong_secret_key_here'
+    
     login_manager = LoginManager()
     login_manager.init_app(app)
     login_manager.login_view = 'login' # Redirect users here if they try to access a protected page
     
+    # --- NEW: Define Database Models (Required for SQLAlchemy) ---
+    class Prediction(db.Model):
+        __tablename__ = 'predictions'
+        id = db.Column(db.Integer, primary_key=True)
+        weight = db.Column(db.Float, nullable=False)
+        temperature = db.Column(db.Float, nullable=False)
+        predicted_fcr = db.Column(db.Float, nullable=False)
+        timestamp = db.Column(db.DateTime, default=db.func.now())
+
+    class User(db.Model, UserMixin): 
+        __tablename__ = 'users'
+        id = db.Column(db.Integer, primary_key=True)
+        email = db.Column(db.String(120), unique=True, nullable=False)
+        username = db.Column(db.String(80), nullable=False)
+        password_hash = db.Column(db.String(128), nullable=False)
+        
+        # Flask-Login requires this method to return the ID as a string
+        def get_id(self):
+            return str(self.id)
+        
+    # --- Store models in app extensions for helper functions to access ---
+    # This replaces the need for passing the models everywhere.
+    app.extensions['sqlalchemy']['User'] = User
+    app.extensions['sqlalchemy']['Prediction'] = Prediction
+
+    # --- Database Creation (Replacing init_db) ---
+    with app.app_context():
+        # This creates tables if they don't exist in the database (PostgreSQL or SQLite)
+        db.create_all()
+
+    # --- Authentication Loaders (Using the new SQLAlchemy User Model) ---    
     def get_user_by_id_in_app_context(app, user_id):
-        """Fetches a user's data by ID for Flask-Login."""
-        db_path = os.path.join(app.root_path, DATABASE)
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute(
-            "SELECT id, eamil, username, password_hash FROM users WHERE id = ?",
-            (user_id,)
-        )
-        user_data = cursor.fetchone()
-        conn.close()
-        
-        if user_data is None:
-            return None
-            
-        return User(id=user_data[0], email=user_data[1], username=user_data[2], password_hash=user_data[3])
-        
+        return User.query.get(user_id)
+    
     @login_manager.user_loader
     def load_user(user_id):
-        return get_user_by_id_in_app_context(app, user_id)
+        return User.query.get(int(user_id))
         
     # --- Model Loading / Training Logic (UNMODIFIED) ---
     raw_data = {
@@ -402,7 +372,6 @@ def create_app(*args, **kwargs):
             pickle.dump(saved_objects, file)
         print(f"Model and scalers saved to {MODEL_FILE}")
 
-
     # --- Prediction Function (UNMODIFIED) ---
     def predict_fcr(animal_type, weight, temperature):
 
@@ -419,11 +388,9 @@ def create_app(*args, **kwargs):
         predicted_fcr_reshaped = predicted_fcr_scaled.reshape(-1, 1)
         predicted_fcr = y_scaler.inverse_transform(predicted_fcr_reshaped)[0][0]
         return predicted_fcr
+    
+    return app
 
-
-    # --- Database Initialization (Runs once per startup) ---
-    with app.app_context():
-        init_db(app)     
 
     # ====================================================================
     # 4. FLASK ROUTES
