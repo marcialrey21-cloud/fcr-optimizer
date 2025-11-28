@@ -120,7 +120,8 @@ def init_db(app):
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL,       
+            username TEXT NOT NULL,
             password_hash TEXT NOT NULL
         )
     ''')
@@ -268,26 +269,29 @@ class User(UserMixin):
     """
     Model that wraps the user data for Flask-Login compatibility.
     """
-    def __init__(self, id, username, password_hash):
+    def __init__(self, id, email, username, password_hash):
         self.id = id
+        self.email = email
         self.username = username
         self.password_hash = password_hash
         
     def get_id(self):
         return str(self.id)
 
-def add_user(app, username, password):
+def add_user(app, email, username, password):
     """Creates a new user and stores the hashed password in the DB."""
     db_path = os.path.join(app.root_path, DATABASE)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     hashed_password = generate_password_hash(password)
+    cleaned_email = email.strip().lower()
+    cleaned_username = username.strip() # Ensure username is clean before saving
     
     try:
         cursor.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-            (username, hashed_password)
+            "INSERT INTO users (email, username, password_hash) VALUES (?, ?)",
+            (cleaned_username, hashed_password)
         )
         conn.commit()
         return True
@@ -296,21 +300,22 @@ def add_user(app, username, password):
     finally:
         conn.close()
 
-def get_user_by_username(app, username):
+def get_user_by_email(app, email):
     """Fetches a user's data from the database by username."""
     db_path = os.path.join(app.root_path, DATABASE)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
+    cleaned_email = email.strip().lower()
     
     cursor.execute(
-        "SELECT id, username, password_hash FROM users WHERE username = ?",
-        (username,)
+        "SELECT id, email, username, password_hash FROM users WHERE username = ?",
+        (cleaned_email,)
     )
     user_data = cursor.fetchone()
     conn.close()
     
     if user_data:
-        return User(id=user_data[0], username=user_data[1], password_hash=user_data[2])
+        return User(id=user_data[0], email=user_data[1], username=user_data[2], password_hash=user_data[3])
     return None
 
 # ====================================================================
@@ -433,16 +438,24 @@ def create_app(*args, **kwargs):
             return redirect(url_for('home'))
             
         if request.method == 'POST':
-            username = request.form.get('username')
-            password = request.form.get('password')
+            email = request.form.get('email').strip().lower()
+            username = request.form.get('username').strip()
+            password = request.form.get('password').strip()
+            confirm_password = request.form.get('confirm_password').strip()
             
-            if not username or not password:
-                return render_template('signup.html', error="Please enter both username and password.")
+            if not email or not username or not password or not confirm_password:
+                return render_template('signup.html', error="Please fill in all fields.")
+            
+            if password != confirm_password:
+                return render_template('signup.html', error="Password do not match.")
+            
+            if len(password) <8:
+                return render_template('signup.html', error="Password must be at least 8 characters long.")
 
-            if add_user(app, username, password):
+            if add_user(app, email, username, password):
                 return redirect(url_for('login'))
             else:
-                return render_template('signup.html', error="Username already exists. Please choose another one.")
+                return render_template('signup.html', error="Email already exists. Please choose another one.")
                 
         return render_template('signup.html', error=None)
 
@@ -452,16 +465,16 @@ def create_app(*args, **kwargs):
             return redirect(url_for('home'))
             
         if request.method == 'POST':
-            username = request.form.get('username')
-            password = request.form.get('password')
+            email = request.form.get('email').strip
+            password = request.form.get('password').strip()
             
-            user = get_user_by_username(app, username)
+            user = get_user_by_email(app, email)
             
             if user and check_password_hash(user.password_hash, password):
                 login_user(user)
                 return redirect(url_for('home'))
             else:
-                return render_template('login.html', error="Invalid username or password.")
+                return render_template('login.html', error="Invalid email or password.")
 
         return render_template('login.html', error=None)
 
