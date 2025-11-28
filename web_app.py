@@ -290,8 +290,8 @@ def add_user(app, email, username, password):
     
     try:
         cursor.execute(
-            "INSERT INTO users (email, username, password_hash) VALUES (?, ?)",
-            (cleaned_username, hashed_password)
+            "INSERT INTO users (email, username, password_hash) VALUES (?, ?, ?)",
+            (cleaned_email, cleaned_username, hashed_password)
         )
         conn.commit()
         return True
