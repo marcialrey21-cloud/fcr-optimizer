@@ -317,7 +317,7 @@ def get_user_by_username(app, username):
 # 3. APPLICATION FACTORY AND MODEL SETUP
 # ====================================================================
 
-def create_app():
+def create_app(**kwargs):
     app = Flask(__name__)
     
     # --- Flask-Login Configuration ---
