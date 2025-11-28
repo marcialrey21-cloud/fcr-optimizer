@@ -305,10 +305,10 @@ def get_user_by_email(app, email):
     db_path = os.path.join(app.root_path, DATABASE)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cleaned_email = email.strip().lower()
+    cleaned_email = email.strip()
     
     cursor.execute(
-        "SELECT id, email, username, password_hash FROM users WHERE username = ?",
+        "SELECT id, email, username, password_hash FROM users WHERE email = ?",
         (cleaned_email,)
     )
     user_data = cursor.fetchone()
@@ -465,11 +465,17 @@ def create_app(*args, **kwargs):
             return redirect(url_for('home'))
             
         if request.method == 'POST':
-            email = request.form.get('email').strip
-            password = request.form.get('password').strip()
+            email_input = request.form.get('email')
+            password_input = request.form.get('password')
             
+            if not email_input or not password_input:
+                return render_template('login.html', error="Please enter both email and password.")
+            
+            email = email_input.strip()
+            password = password_input.strip()
+
             user = get_user_by_email(app, email)
-            
+
             if user and check_password_hash(user.password_hash, password):
                 login_user(user)
                 return redirect(url_for('home'))
