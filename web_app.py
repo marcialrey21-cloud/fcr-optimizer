@@ -14,6 +14,7 @@ from pulp import LpProblem, LpMinimize, LpVariable, value
 from flask_login import UserMixin, LoginManager, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import exc # For catching IntegrityError
 # -------------------------------------
 
 DATABASE = 'fcr_data.db' 
@@ -23,7 +24,58 @@ FCR_ANIMAL_TYPES = ['PIG', 'CATTLE', 'POULTRY']
 # ====================================================================
 # 1. GLOBAL DATA DEFINITIONS
 # ====================================================================
+from flask import Flask, request, render_template, redirect, url_for
+import numpy as np
+import pandas as pd
+from sklearn.svm import SVR 
+import pickle
+import os
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.model_selection import GridSearchCV
+from thefuzz import fuzz
+from thefuzz import process
+from pulp import LpProblem, LpMinimize, LpVariable, value
+# REMOVE sqlite3 import
 
+# --- NEW IMPORTS for Authentication & Persistence ---
+from flask_login import UserMixin, LoginManager, login_user, logout_user, login_required, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import exc # For catching IntegrityError
+# -------------------------------------
+
+DATABASE = 'fcr_data.db' 
+MODEL_FILE = 'model.pkl'
+FCR_ANIMAL_TYPES = ['PIG', 'CATTLE', 'POULTRY']
+
+# ====================================================================
+# 1. GLOBAL DATA DEFINITIONS (SQLAlchemy Core Components)
+# ====================================================================
+
+# 1. Global DB Object: Initialized here, connected later inside create_app
+db = SQLAlchemy()
+
+# 2. Define Database Models (Must be defined globally to be accessible)
+class Prediction(db.Model):
+    __tablename__ = 'predictions'
+    id = db.Column(db.Integer, primary_key=True)
+    weight = db.Column(db.Float, nullable=False)
+    temperature = db.Column(db.Float, nullable=False)
+    predicted_fcr = db.Column(db.Float, nullable=False)
+    timestamp = db.Column(db.DateTime, default=db.func.now())
+
+class User(db.Model, UserMixin): 
+    __tablename__ = 'users'
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    username = db.Column(db.String(80), nullable=False)
+    password_hash = db.Column(db.String(128), nullable=False)
+    
+    def get_id(self):
+        return str(self.id)
+
+# --- Ingredients Data (Unchanged) ---
+# ... your FORMULATION_TARGETS and INGREDIENT_DATA dictionaries remain here ...
 # --- A. EXPANDED FORMULATION TARGETS (Nutrient Constraints) ---
 FORMULATION_TARGETS = {
     # ------------------ SWINE (PIGS) - PIC/BAI Standards ------------------
@@ -102,89 +154,75 @@ INGREDIENT_DATA = {
 # inside create_app to avoid circular imports.
 # The functions below will access them via the application context.
 
-from sqlalchemy import exc # Import SQLAlchemy exceptions for error handling
-
-def get_db_models(app):
-    """Retrieves the SQLAlchemy db object, User model, and Prediction model 
-       from the application context."""
-    return app.extensions['sqlalchemy'], app.extensions['sqlalchemy']['User'], app.extensions['sqlalchemy']['Prediction']
-
-
 # --- Database Operations using SQLAlchemy ---
 
 def add_user(app, email, username, password):
     """Creates a new user and stores the hashed password in the DB using SQLAlchemy."""
-    db, User, _ = get_db_models(app)
+    with app.app_context():
+        hashed_password = generate_password_hash(password)
+        cleaned_email = email.strip().lower()
+        cleaned_username = username.strip() 
 
-    hashed_password = generate_password_hash(password)
-    cleaned_email = email.strip().lower()
-    cleaned_username = username.strip() 
-
-    new_user = User(email=cleaned_email, username=cleaned_username, password_hash=hashed_password)
+        new_user = User(email=cleaned_email, username=cleaned_username, password_hash=hashed_password)
     
-    try:
-        db.session.add(new_user)
-        db.session.commit()
-        return True
-    except exc.IntegrityError:
+        try:
+            db.session.add(new_user)
+            db.session.commit()
+            return True
+        except exc.IntegrityError:
         # User with that email already exists
-        db.session.rollback()
-        return False
+            db.session.rollback()
+            return False
 
 def get_user_by_email(app, email):
     """Fetches a user's data from the database by email using SQLAlchemy."""
-    _, User, _ = get_db_models(app)
-    cleaned_email = email.strip().lower()
+    with app.app_context():
+        cleaned_email = email.strip().lower()
+        user = User.query.filter_by(email=cleaned_email).first()
+        return user
     
-    # Use SQLAlchemy to query the user
-    user = User.query.filter_by(email=cleaned_email).first()
-    return user
-
 def save_prediction(app, weight, temperature, predicted_fcr):
     """Saves a single FCR prediction result to the database using SQLAlchemy."""
-    db, _, Prediction = get_db_models(app)
-
-    new_prediction = Prediction(
-        weight=weight, 
-        temperature=temperature, 
-        predicted_fcr=predicted_fcr
-    )
+    with app.app_context():
+        new_prediction = Prediction(
+            weight=weight, 
+            temperature=temperature, 
+            predicted_fcr=predicted_fcr
+        )
     
-    db.session.add(new_prediction)
-    db.session.commit()
+        db.session.add(new_prediction)
+        db.session.commit()
 
 def clear_db_predictions(app):
     """Deletes all records from the predictions table using SQLAlchemy."""
-    db, _, Prediction = get_db_models(app)
+    with app.app_context():
     
-    # Delete all records from the Prediction table
-    Prediction.query.delete()
-    db.session.commit()
+        Prediction.query.delete()
+        db.session.commit()
 
 def get_analysis_data(app):
     """Fetches all predictions and calculates summary statistics using SQLAlchemy."""
-    db, _, Prediction = get_db_models(app)
+    with app.app_context():
+        # Fetch all predictions ordered by timestamp
+        all_predictions_objects = Prediction.query.order_by(Prediction.timestamp.desc()).all()
     
-    # Fetch all predictions ordered by timestamp
-    all_predictions_objects = Prediction.query.order_by(Prediction.timestamp.desc()).all()
+        data_list = [{'weight': p.weight, 'temp': p.temperature, 'fcr': p.predicted_fcr, 'time': p.timestamp} 
+                     for p in all_predictions_objects]
     
-    data_list = [{'weight': p.weight, 'temp': p.temperature, 'fcr': p.predicted_fcr, 'time': p.timestamp} 
-                 for p in all_predictions_objects]
-    
-    if data_list:
-        fcr_values = np.array([d['fcr'] for d in data_list])
+        if data_list:
+            fcr_values = np.array([d['fcr'] for d in data_list])
         
-        summary = {
-            'count': len(data_list),
-            'avg_fcr': np.mean(fcr_values),
-            'min_fcr': np.min(fcr_values),
-            'max_fcr': np.max(fcr_values),
-            'std_fcr': np.std(fcr_values)
-        }
-    else:
-        summary = None
+            summary = {
+                'count': len(data_list),
+                'avg_fcr': np.mean(fcr_values),
+                'min_fcr': np.min(fcr_values),
+                'max_fcr': np.max(fcr_values),
+                'std_fcr': np.std(fcr_values)
+            }
+        else:
+            summary = None
         
-    return summary, data_list
+        return summary, data_list
 
 def least_cost_formulate(animal_type, target_batch_kg=100, custom_targets=None):
     """
@@ -280,51 +318,21 @@ def create_app(*args, **kwargs):
     app.config['SQLALCHEMY_DATABASE_URI'] = db_url or f'sqlite:///{os.path.join(app.root_path, DATABASE)}' 
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     # 3. Initialize the database object
-    db = SQLAlchemy(app) 
+    db.init_app(app) 
+    
     app.config['SECRET_KEY'] = 'your_strong_secret_key_here'
     
     login_manager = LoginManager()
     login_manager.init_app(app)
     login_manager.login_view = 'login' # Redirect users here if they try to access a protected page
     
-    # --- NEW: Define Database Models (Required for SQLAlchemy) ---
-    class Prediction(db.Model):
-        __tablename__ = 'predictions'
-        id = db.Column(db.Integer, primary_key=True)
-        weight = db.Column(db.Float, nullable=False)
-        temperature = db.Column(db.Float, nullable=False)
-        predicted_fcr = db.Column(db.Float, nullable=False)
-        timestamp = db.Column(db.DateTime, default=db.func.now())
-
-    class User(db.Model, UserMixin): 
-        __tablename__ = 'users'
-        id = db.Column(db.Integer, primary_key=True)
-        email = db.Column(db.String(120), unique=True, nullable=False)
-        username = db.Column(db.String(80), nullable=False)
-        password_hash = db.Column(db.String(128), nullable=False)
-        
-        # Flask-Login requires this method to return the ID as a string
-        def get_id(self):
-            return str(self.id)
-        
-    # --- Store models in app extensions for helper functions to access ---
-    # This replaces the need for passing the models everywhere.
-    app.extensions['sqlalchemy']['User'] = User
-    app.extensions['sqlalchemy']['Prediction'] = Prediction
-
-    # --- Database Creation (Replacing init_db) ---
-    with app.app_context():
-        # This creates tables if they don't exist in the database (PostgreSQL or SQLite)
-        db.create_all()
-
-    # --- Authentication Loaders (Using the new SQLAlchemy User Model) ---    
-    def get_user_by_id_in_app_context(app, user_id):
-        return User.query.get(user_id)
-    
     @login_manager.user_loader
     def load_user(user_id):
-        return User.query.get(int(user_id))
-        
+        with app.app_context():
+            return User.query.get(int(user_id))
+
+    with app.app_context():
+        db.create_all()    
     # --- Model Loading / Training Logic (UNMODIFIED) ---
     raw_data = {
         'Type': ['PIG'] * 5 + ['CATTLE'] * 5 + ['POULTRY'] * 5,
