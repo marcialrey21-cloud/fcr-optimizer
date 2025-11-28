@@ -345,7 +345,7 @@ def create_app(*args, **kwargs):
         conn.close()
         
         if user_data:
-            return User(id=user_data[0], username=user_data[1], password_hash=user_data[2])
+            return User(id=user_data[0], email=user_data[1], username=user_data[2], password_hash=user_data[3])
         return None
         
     @login_manager.user_loader
