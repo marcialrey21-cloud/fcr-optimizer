@@ -317,7 +317,7 @@ def get_user_by_username(app, username):
 # 3. APPLICATION FACTORY AND MODEL SETUP
 # ====================================================================
 
-def create_app(**kwargs):
+def create_app(*args, **kwargs):
     app = Flask(__name__)
     
     # --- Flask-Login Configuration ---
@@ -639,7 +639,5 @@ def create_app(**kwargs):
     return app
 
 
-# --- Local Runner for Development ONLY ---
-if __name__ == '__main__':
-    local_app = create_app()
-    local_app.run(debug=True)
+# --- Production App Instance ---
+application = create_app()
