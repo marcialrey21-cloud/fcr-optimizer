@@ -338,7 +338,7 @@ def create_app(*args, **kwargs):
         cursor = conn.cursor()
         
         cursor.execute(
-            "SELECT id, username, password_hash FROM users WHERE id = ?",
+            "SELECT id, eamil, username, password_hash FROM users WHERE id = ?",
             (user_id,)
         )
         user_data = cursor.fetchone()
