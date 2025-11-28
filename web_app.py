@@ -324,6 +324,8 @@ def get_user_by_email(app, email):
 
 def create_app(*args, **kwargs):
     app = Flask(__name__)
+    # Add a harmless comment to trigger a new commit and rebuild
+    # trigger deployment 1
     
     # --- Flask-Login Configuration ---
     app.config['SECRET_KEY'] = 'your_strong_secret_key_here' 
