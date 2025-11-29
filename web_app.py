@@ -404,11 +404,12 @@ def create_app(*args, **kwargs):
     # 4. FLASK ROUTES
     # ====================================================================
     
-    @app.route('/', methods=['GET'])
-    @app.route('/index', methods=['GET'])
+    @app.route('/')
     def home():
-        return render_template('index.html', result=None, fcr_animal_types=FCR_ANIMAL_TYPES)
-
+        # If the user is authenticated, show the main prediction page (index.html).
+        if current_user.is_authenticated:
+            return render_template('index.html', result=None, fcr_animal_types=FCR_ANIMAL_TYPES)
+        return redirect(url_for('login'))
     # --- NEW AUTHENTICATION ROUTES ---
 
     @app.route('/signup', methods=['GET', 'POST'])
