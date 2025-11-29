@@ -412,7 +412,9 @@ def create_app(*args, **kwargs):
     # --- NEW AUTHENTICATION ROUTES ---
 
     @app.route('/signup', methods=['GET', 'POST'])
+    @app.route('/signup/', methods=['GET', 'POST']) # New line
     def signup():
+
         if current_user.is_authenticated:
             return redirect(url_for('home'))
             
@@ -438,7 +440,9 @@ def create_app(*args, **kwargs):
                 
         return render_template('signup.html', error=None)
 
+    
     @app.route('/login', methods=['GET', 'POST'])
+    @app.route('/login/', methods=['GET', 'POST']) # New line
     def login():
         if current_user.is_authenticated:
             return redirect(url_for('home'))
