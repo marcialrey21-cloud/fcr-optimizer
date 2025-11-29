@@ -404,7 +404,8 @@ def create_app(*args, **kwargs):
     # 4. FLASK ROUTES
     # ====================================================================
     
-    @app.route('/')
+    @app.route('/', methods=['GET'])
+    @app.route('/index', methods=['GET'])
     def home():
         return render_template('index.html', result=None, fcr_animal_types=FCR_ANIMAL_TYPES)
 
