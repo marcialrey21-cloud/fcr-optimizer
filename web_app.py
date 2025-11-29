@@ -404,8 +404,9 @@ def create_app(*args, **kwargs):
     # 4. FLASK ROUTES
     # ====================================================================
     
-    @app.route('/')
-    def home():
+    @app.route('/', defaults={'path': ''})
+    @app.route('/<path:path>')
+    def catch_all(path):
         # If the user is authenticated, show the main prediction page (index.html).
         if current_user.is_authenticated:
             return render_template('index.html', result=None, fcr_animal_types=FCR_ANIMAL_TYPES)
